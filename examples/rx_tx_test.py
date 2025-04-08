@@ -9,6 +9,21 @@ import argparse
 from random import randint
 import numpy as np
 
+SPI0 = {
+    'MOSI':10,#dio.DigitalInOut(board.D10),
+    'MISO':9,#dio.DigitalInOut(board.D9),
+    'clock':11,#dio.DigitalInOut(board.D11),
+    'ce_pin':dio.DigitalInOut(board.D17),
+    'csn':dio.DigitalInOut(board.D8),
+    }
+SPI1 = {
+    'MOSI':20,#dio.DigitalInOut(board.D10),
+    'MISO':19,#dio.DigitalInOut(board.D9),
+    'clock':21,#dio.DigitalInOut(board.D11),
+    'ce_pin':dio.DigitalInOut(board.D27),
+    'csn':dio.DigitalInOut(board.D18),
+    }
+
 def tx(nrf, channel, address, count, size):
     nrf.open_tx_pipe(address)  # set address of RX node into a TX pipe
     nrf.listen = False
@@ -22,17 +37,17 @@ def tx(nrf, channel, address, count, size):
         # use struct.pack to packetize your data
         # into a usable payload
 
-        #buffer = struct.pack("<i", count)
+        buffer = struct.pack("<i", count)
         # 'i' means a single 4 byte int value.
         # '<' means little endian byte order. this may be optional
-        #print("Sending: {} as struct: {}".format(count, buffer))
+        print("Sending: {} as struct: {}".format(count, buffer))
         result = nrf.send(buffer)
         if not result:
-            #print("send() failed or timed out")
-            #print(nrf.what_happened())
+            print("send() failed or timed out")
+            print(nrf.what_happened())
             status.append(False)
         else:
-            #print("send() successful")
+            print("send() successful")
             status.append(True)
         # print timer results despite transmission success
         count -= 1
@@ -61,10 +76,10 @@ def rx(nrf, channel, address, count):
             rx = nrf.read()  # also clears nrf.irq_dr status flag
             # expecting an int, thus the string format '<i'
             # the rx[:4] is just in case dynamic payloads were disabled
-            #buffer = struct.unpack("<i", rx[:4])  # [:4] truncates padded 0s
+            buffer = struct.unpack("<i", rx[:4])  # [:4] truncates padded 0s
             # print the only item in the resulting tuple from
             # using `struct.unpack()`
-            #print("Received: {}, Raw: {}".format(buffer[0], rx))
+            print("Received: {}, Raw: {}".format(buffer[0], rx))
             #start = time.monotonic()
             count -= 1
             # this will listen indefinitely till count == 0

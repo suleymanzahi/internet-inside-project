@@ -1,11 +1,11 @@
 from multiprocessing import Process
 import time
 import struct
-from pyrf24 import RF24, RF24_PA_MIN, RF24_2MBPS
+from pyrf24 import RF24, RF24_PA_MIN, RF24_PA_LOW, RF24_2MBPS
 
 # using the python keyword global is bad practice. Instead we'll use a 1 item
 # list to store our float number for the payloads sent
-payload = [b"greetings to all!"]
+payload = [b"Hello, Universe!"]
 
 # For this example, we will use different addresses
 # An address need to be a buffer protocol object (bytearray)
@@ -20,6 +20,7 @@ address = [b"1Node", b"2Node"]
 
 def tx(radio: RF24, address: bytes, count: int = 5):  # count = 5 will only transmit 5 packets
     """Transmits an incrementing float every second"""
+    radio.open_tx_pipe(address)
     radio.listen = False  # ensures the nRF24L01 is in TX mode
 
     while count:
@@ -28,9 +29,9 @@ def tx(radio: RF24, address: bytes, count: int = 5):  # count = 5 will only tran
         #buffer = struct.pack("<f", payload[0])
         # "<f" means a single little endian (4 byte) float value.
         start_timer = time.monotonic_ns()  # start timer
-        #result = radio.write(payload[0])
-        result = radio.write_fast(payload[0])
-        #radio.tx_standby()
+        result = radio.write(payload[0])
+        #result = radio.write_fast(payload[0])
+        #radio.tx_standby(50)
 
         end_timer = time.monotonic_ns()  # end timer
         if not result:
@@ -48,7 +49,7 @@ def tx(radio: RF24, address: bytes, count: int = 5):  # count = 5 will only tran
 def rx(radio: RF24, address: bytes, timeout: int = 6):
     """Polls the radio and prints the received value. This method expires
     after 6 seconds of no received transmission."""
-
+    radio.open_rx_pipe(1, address) # not sure about address, double check
     radio.listen = True  # put radio into RX mode and power up
 
     start = time.monotonic()
@@ -80,23 +81,21 @@ radios = [RF24(17, 0),  RF24(27, 10)]
 rx_nrf, tx_nrf = radios
 
 for i, radio in enumerate(radios):
+
     if not radio.begin():
         raise RuntimeError("NRF24L01+ hardware is not responding")
-
+    # for consistency purposes, since pipes remain open after program close
+    radio.close_rx_pipe(0)
+    radio.close_rx_pipe(1)
     #print(rx_nrf.is_chip_connected, rx_nrf.is_valid)
     radio.set_pa_level(RF24_PA_MIN)
-    i = bool(i)
-    if not i:
-        radio.open_tx_pipe(address[i])  # always uses pipe 0
-    radio.open_rx_pipe(1, address[not i])  # using pipe 1
-    #radio.payload_size = struct.calcsize("<f")
     radio.payload_size = len(payload[0])
     radio.data_rate = RF24_2MBPS
 
     radio.print_pretty_details()
 
-rx_process = Process(target=rx, kwargs={'radio':rx_nrf, 'address':address})
-tx_process = Process(target=tx, kwargs={'radio':tx_nrf, 'address':address})
+rx_process = Process(target=rx, kwargs={'radio':rx_nrf, 'address':address[0]})
+tx_process = Process(target=tx, kwargs={'radio':tx_nrf, 'address':address[0]})
 
 rx_process.start()
 time.sleep(1)
