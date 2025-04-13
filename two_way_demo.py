@@ -2,7 +2,7 @@ from multiprocessing import Process
 import time
 import struct
 from pyrf24 import RF24, RF24_PA_MIN, RF24_PA_LOW, RF24_2MBPS
-
+import random
 # using the python keyword global is bad practice. Instead we'll use a 1 item
 # list to store our float number for the payloads sent
 payload = [b"Hello, Universe!"]
@@ -16,93 +16,116 @@ address = [b"1Node", b"2Node"]
 
 # To save time during transmission, we'll set the payload size to be only what
 # we need. A float value occupies 4 bytes in memory using struct.calcsize()
-# "<f" means a little endian unsigned float
-
-def radio_one(radio: RF24, address_in: bytes, address_out: bytes, timeout: int = 5): 
-    """ Starts in transfering mode."""
+# "<f" means a little endian unsigned float      
+        
+def radio_one(radio: RF24, address_in: bytes, address_out: bytes, timeout: int = 5):
+    """Radio 1: Sends a list of messages and waits for a reply to each."""
     radio.open_tx_pipe(address_out)
-    radio.open_rx_pipe(1,address_in)
-    msg_count = 0
-    msg_sent = 5
-    for _ in range(msg_sent):
-        msg_count += 1
-        radio.listen = False  # ensures the nRF24L01 is in TX mode
-        msg = "ping"
-        time.sleep(1)
-        print(f"Sent: {msg} -->\n")
-        radio.write(msg.encode())
-        answer_rc = False
-        radio.listen = True
-        if msg_sent == msg_count:
-            print("Sent all messages!\n")
-        timeout_start = time.time() + timeout
-        while not answer_rc:
-            has_payload, pipe_number = radio.available_pipe()
-            if has_payload:
-                received = radio.read()
-                received = received.decode('utf-8')
-                print(f"Received: {received}\n")
-                if msg_sent == msg_count:
-                    print("Recieved same amount of messages as I've sent!\n")
-                break
-            if time.time() >= timeout_start:
-                print("Radio one timed out\n")
-                exit(-1)
+    radio.open_rx_pipe(1, address_in)
+    messages = ["this","is","a","secret","message", "END"]
+    # Loop through the messages and send them one by one
+    for msg in messages:
+        msg_success = False
+        retries = 0
+        while not msg_success:
+            radio.stopListening()
+            print(f" Sending: {msg} ")
+            
+            # Send the message
+            success = radio.write(msg.encode())
+            
+            radio.startListening()
+            start_time = time.time()
 
+            # Wait for a reply for up to 'timeout' seconds
+            while time.time() - start_time < timeout:
+                if radio.available():
+                    reply = radio.read().decode('utf-8')
+                    print(f" {reply} ")
+                    msg_success = True
+                    # Wait for Radio 2's custom message
+                    custom_msg = radio.read()
+                    print(f" Received custom message from Radio 2: {custom_msg.decode()} ")
+                    break
+                time.sleep(0.7)
+            else:
+                if retries == 5:
+                    print(" Other side is not communicating. Closing ..")
+                    exit(-1)
+                print(" Timeout waiting for reply. Sending again.. ")
+                retries += 1
+                
 
 def radio_two(radio: RF24, address_in: bytes, address_out: bytes, timeout: int = 5):
-    """Polls the radio and prints the received value. This method expires
-    after 6 seconds of no received transmission.
-    Starts in listening mode."""
-    radio.open_rx_pipe(0, address_in) # not sure about address, double check
+    """Radio 2: Listens for a message, sends an acknowledgment, and also sends its own message."""
+    radio.open_rx_pipe(1, address_in)
     radio.open_tx_pipe(address_out)
-    radio.listen = True  # put radio into RX mode and power up
+    radio.startListening()
+    # Loop indefinitely to handle multiple messages
+    while True:
+        start_time = time.time()
 
-    timeout_start = time.time() + timeout
-    while time.time() < timeout_start:
-        has_payload, pipe_number = radio.available_pipe()
-        #print("listening")
-        if has_payload:
-            received = radio.read()
-            received = received.decode('utf-8')
-            print(f"Received: {received}\n")
-            radio.listen = False
-            msg = "pong"
-            time.sleep(1)
-            print(f"Sent: {msg} -->\n")
-            radio.write(msg.encode())
-            radio.listen = True
-            timeout_start = time.time() + timeout
-            
-    print("\n Radio two timed out")
+        # Wait for a message for up to 'timeout' seconds
+        while time.time() - start_time < timeout:
+            if radio.available():
+                received_msg = radio.read(radio.payload_size)
+                received_msg = received_msg.decode('utf-8')
+                if received_msg == "END":
+                    print(f" Closing radio two.")
+                    exit(0)
+                # Send acknowledgment back (pong)
+                radio.stopListening()
+                ack_msg = f"ACK: {received_msg}"
+                radio.write(ack_msg.encode())
+
+                # Now send Radio 2's custom response message
+                response_message = str(random.randint(1,100))
+                radio.write(response_message.encode())
+                start_time = time.time()
+                radio.startListening()
+                break
+
+            time.sleep(0.7)
+        else:
+            print("Timeout waiting for message.")
+            exit(-1)
             
 # Setup for GPIO pins (CE, CSN) on the Raspberry Pi
 # CE pin on GPIO17, CSN pin on GPIO0 (using spidev0.0)
 # 27, 10 for other radio
 # pins = [(17, 0), (27, 10)]
-radios = [RF24(17, 0),  RF24(27, 10)]
-
-# Initialize the RF24 object with the CE and CSN pin numbers
-rx_nrf, tx_nrf = radios
-for radio in radios:
-
+def setup_radio(radio: RF24, ce_pin: int, csn_pin: int):
+    """Initializes the radio with necessary configurations."""
     if not radio.begin():
-        raise RuntimeError("NRF24L01+ hardware is not responding")
-    # for consistency purposes, since pipes remain open after program close
+        raise RuntimeError(f"NRF24L01+ on pins {ce_pin}, {csn_pin} not responding")
+    
+    radio.set_pa_level(RF24_PA_MIN)
+    radio.payload_size = 100
+    radio.data_rate = RF24_2MBPS
     radio.close_rx_pipe(0)
     radio.close_rx_pipe(1)
-    #print(rx_nrf.is_chip_connected, rx_nrf.is_valid)
-    radio.set_pa_level(RF24_PA_MIN)
-    radio.payload_size = len(payload[0])
-    radio.data_rate = RF24_2MBPS
 
-    #radio.print_pretty_details()
-    
-rx_process = Process(target=radio_one, kwargs={'radio':rx_nrf, 'address_in':address[1],'address_out':address[0]})
-tx_process = Process(target=radio_two, kwargs={'radio':tx_nrf, 'address_in':address[0],'address_out':address[1]})
-rx_process.start()
-time.sleep(1)
-tx_process.start()
+def main():
+    # Setup radios
+    rx_radio = RF24(17, 0)  # Receiver radio (CE pin 17, CSN pin 0)
+    tx_radio = RF24(27, 10)  # Transmitter radio (CE pin 27, CSN pin 10)
 
-tx_process.join()
-rx_process.join()
+    # Initialize radios
+    setup_radio(rx_radio, 17, 0)
+    setup_radio(tx_radio, 27, 10)
+
+    # Start processes for sending and receiving
+    rx_process = Process(target=radio_one, kwargs={'radio': rx_radio, 'address_in': address[1], 'address_out': address[0]})
+    tx_process = Process(target=radio_two, kwargs={'radio': tx_radio, 'address_in': address[0], 'address_out': address[1]})
+
+    # Start both processes
+    tx_process.start()
+    time.sleep(1)  # Allow receiver to start first
+    rx_process.start()
+
+    # Wait for both processes to finish
+    tx_process.join()
+    rx_process.join()
+
+if __name__ == "__main__":
+    main()
