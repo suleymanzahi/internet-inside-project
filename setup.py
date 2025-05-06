@@ -77,10 +77,14 @@ def fragment(seq, size=31):
 # TODO create startup scripts for base station and mobile (modify setup.py)
 # major things is to setup routing, tun, IP tables on base station, and get ping -> base station and ping to 8.8.8.8 working
 
+# TODO big-endian versus little endian seems to be messed up
+
+# TODO must take into account random requests, like NTP requests
 
 try:
     while True:
         data = tun.read()
+        hexdump(data)
         fragmented_chunks = fragment(data)
         for chunk in fragmented_chunks:
             main_to_tx.send(chunk)
